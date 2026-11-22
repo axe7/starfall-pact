@@ -1,141 +1,209 @@
-// Drawing only: the world's state and the current screen in, pixels out. The 1280x720 playfield
-// is scaled to fit the window and centred, the margin filled with the backdrop colour. Flat
-// rectangles and circles, canvas text for the HUD and the panels. Text that holds a number is
-// rebuilt only when the number changes, so a frame allocates nothing.
-import { FIELD, FONT, LIVES, PALETTE } from './config.js';
-import { KIND_COIN } from './world.js';
+// Starfall Pact — the renderer.
+// Draws the whole table from game state as DOM: duelist banners with life
+// totals, the rival's face-down hand, both spirit fields, your hand of
+// readable cards, starlight crystals and the message log. Cards are told
+// apart by suit colour and glyph, never by text alone.
 
-export const SCREEN_TITLE = 'title';
-export const SCREEN_PLAY = 'play';
-export const SCREEN_PAUSED = 'paused';
-export const SCREEN_OVER = 'over';
+import { SUITS } from './cards.js';
+import { MAX_STARLIGHT } from './engine.js';
 
-/** The panel's width; its height grows with its lines: room for the title, the lines and the prompt. */
-const PANEL = { width: 600, top: 134, line: 34, bottom: 70 };
-const LIFE_SIZE = 20;
-const LIFE_GAP = 8;
+const seenFieldUids = new Set();
 
-function cachedLabel(prefix) {
-  let value = -1;
-  let text = '';
-  return function label(next) {
-    if (next !== value) {
-      value = next;
-      text = prefix + next;
-    }
-    return text;
-  };
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
 }
 
-export function createRenderer(canvas) {
-  const context = canvas.getContext('2d');
-  const view = { scale: 1, x: 0, y: 0 };
-  const scoreLabel = cachedLabel('Score ');
-  const levelLabel = cachedLabel('Level ');
-  const finalLabel = cachedLabel('Score ');
-  const bestLabel = cachedLabel('Best ');
+// One card face. Spirits show power (bottom left) and guard (bottom
+// right); charms show their effect text. The cost sits in a crystal at
+// the top left and the suit glyph fills the art box.
+export function makeCardElement(card, options = {}) {
+  const suit = SUITS[card.suit];
+  const node = el('div', `card suit-${card.suit}${options.mini ? ' mini' : ''}`);
+  node.style.setProperty('--suit-color', suit.color);
+  node.dataset.uid = String(card.uid ?? '');
 
-  function resize() {
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.round(window.innerWidth * ratio);
-    const height = Math.round(window.innerHeight * ratio);
-    canvas.width = width;
-    canvas.height = height;
-    view.scale = Math.min(width / FIELD.width, height / FIELD.height);
-    view.x = (width - FIELD.width * view.scale) / 2;
-    view.y = (height - FIELD.height * view.scale) / 2;
+  const top = el('div', 'card-top');
+  top.append(el('span', 'cost', String(card.cost)));
+  top.append(el('span', 'card-name', card.name));
+  top.append(el('span', 'suit-glyph', suit.glyph));
+  node.append(top);
+
+  node.append(el('div', 'card-art', suit.glyph));
+
+  const body = el('div', 'card-body');
+  if (card.kind === 'spirit') {
+    body.append(el('div', 'card-kind', `${suit.name} Spirit`));
+  } else {
+    body.append(el('div', 'card-kind', `${suit.name} Charm`));
   }
+  if (card.text) body.append(el('div', 'card-text', card.text));
+  node.append(body);
 
-  const fonts = new Map();
-  function text(value, x, y, size, color, align) {
-    if (!fonts.has(size)) fonts.set(size, `${size}px ${FONT}`);
-    context.font = fonts.get(size);
-    context.fillStyle = color;
-    context.textAlign = align;
-    context.fillText(value, x, y);
+  if (card.kind === 'spirit') {
+    const stats = el('div', 'card-stats');
+    stats.append(el('span', 'power', `⚔ ${card.power}`));
+    const guard = el('span', 'guard', `⛨ ${card.guard}`);
+    if (card.guard < card.maxGuard) guard.classList.add('wounded');
+    stats.append(guard);
+    node.append(stats);
+    if (options.onField && card.tired) node.append(el('div', 'tired-badge', 'resting'));
+    if (options.onField && card.attacked) node.append(el('div', 'tired-badge', 'spent'));
   }
+  if (options.extraClass) node.classList.add(options.extraClass);
+  return node;
+}
 
-  function drawField(state) {
-    context.fillStyle = PALETTE.sky;
-    context.fillRect(0, 0, FIELD.width, FIELD.height);
-    context.fillStyle = PALETTE.ground;
-    context.fillRect(0, FIELD.groundY, FIELD.width, FIELD.height - FIELD.groundY);
+function makeCardBack() {
+  const node = el('div', 'card back mini');
+  node.append(el('div', 'back-star', '★'));
+  return node;
+}
 
-    const items = state.items;
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      if (item.kind === KIND_COIN) {
-        context.fillStyle = PALETTE.coin;
-        context.beginPath();
-        context.arc(item.x + item.width / 2, item.y + item.height / 2, item.width / 2, 0, Math.PI * 2);
-        context.fill();
-      } else {
-        context.fillStyle = PALETTE.block;
-        context.fillRect(item.x, item.y, item.width, item.height);
-      }
-    }
-
-    const player = state.player;
-    // Blink while invulnerable after a hit: hidden on every other tenth of a second.
-    if (player.invulnerable === 0 || Math.floor(player.invulnerable * 10) % 2 === 1) {
-      context.fillStyle = PALETTE.player;
-      context.fillRect(player.x, player.y, player.width, player.height);
-    }
+function renderDuelist(zone, state, who, ui, handlers) {
+  const player = state.players[who];
+  zone.innerHTML = '';
+  const banner = el('div', `duelist${ui.flashDuelist === who ? ' shake' : ''}`);
+  banner.append(el('div', 'duelist-face', who === 'you' ? '✦' : '☾'));
+  const words = el('div', 'duelist-words');
+  words.append(el('div', 'duelist-name', player.name));
+  words.append(el('div', 'duelist-sub', `deck ${player.deck.length} · hand ${player.hand.length} · faded ${player.discard.length}`));
+  banner.append(words);
+  const life = el('div', 'life', `♥ ${Math.max(player.life, 0)}`);
+  if (player.life <= 6) life.classList.add('low');
+  banner.append(life);
+  if (ui.targetSet && ui.targetSet.has(`${who}:duelist`)) {
+    banner.classList.add('targetable');
+    banner.addEventListener('click', () => handlers.onDuelist(who));
   }
+  zone.append(banner);
+}
 
-  function drawHud(state) {
-    context.textBaseline = 'top';
-    text(scoreLabel(state.score), 24, 20, 28, PALETTE.text, 'left');
-    text(levelLabel(state.level), FIELD.width / 2, 20, 28, PALETTE.text, 'center');
-    const firstLife = FIELD.width - 24 - LIVES * (LIFE_SIZE + LIFE_GAP) + LIFE_GAP;
-    text('Lives', firstLife - 12, 20, 28, PALETTE.text, 'right');
-    for (let life = 0; life < LIVES; life += 1) {
-      context.fillStyle = life < state.lives ? PALETTE.player : PALETTE.ground;
-      context.fillRect(firstLife + life * (LIFE_SIZE + LIFE_GAP), 24, LIFE_SIZE, LIFE_SIZE);
-    }
+function renderField(zone, state, who, ui, handlers) {
+  zone.innerHTML = '';
+  const player = state.players[who];
+  if (player.field.length === 0) {
+    zone.append(el('div', 'field-empty', who === 'you' ? 'Your field is empty — play a spirit.' : 'No spirits yet.'));
+    return;
   }
-
-  function drawPanel(title, lines, prompt) {
-    const height = PANEL.top + lines.length * PANEL.line + PANEL.bottom;
-    const x = (FIELD.width - PANEL.width) / 2;
-    const y = (FIELD.height - height) / 2;
-    context.fillStyle = PALETTE.panel;
-    context.fillRect(x, y, PANEL.width, height);
-    context.textBaseline = 'alphabetic';
-    text(title, FIELD.width / 2, y + 78, 48, PALETTE.text, 'center');
-    for (let index = 0; index < lines.length; index += 1) {
-      text(lines[index], FIELD.width / 2, y + PANEL.top + index * PANEL.line, 22, PALETTE.muted, 'center');
+  for (const spirit of player.field) {
+    const isNew = !seenFieldUids.has(spirit.uid);
+    seenFieldUids.add(spirit.uid);
+    const cardEl = makeCardElement(spirit, { extraClass: isNew ? 'enter' : '', onField: true });
+    if (ui.flashUids && ui.flashUids.has(spirit.uid)) cardEl.classList.add('hurt');
+    if (ui.selectedAttacker === spirit.uid) cardEl.classList.add('selected');
+    if (who === 'you' && state.active === 'you' && !spirit.tired && !spirit.attacked && state.phase === 'play' && !ui.busy) {
+      cardEl.classList.add('ready');
     }
-    text(prompt, FIELD.width / 2, y + height - 40, 24, PALETTE.coin, 'center');
+    if (ui.targetSet && ui.targetSet.has(`${who}:${spirit.uid}`)) cardEl.classList.add('targetable');
+    cardEl.addEventListener('click', () => handlers.onFieldSpirit(who, spirit.uid));
+    zone.append(cardEl);
   }
+}
 
-  const TITLE_LINES = ['Dodge the red blocks. Catch the gold coins.', 'Move with ← → or A D.  Pause with P.', ''];
-  const PAUSED_LINES = ['The blocks will wait for you.'];
-  const OVER_LINES = ['', ''];
+function renderHands(root, state, ui, handlers) {
+  const rivalHand = root.querySelector('#rival-hand');
+  rivalHand.innerHTML = '';
+  for (let i = 0; i < state.players.rival.hand.length; i += 1) rivalHand.append(makeCardBack());
 
-  /** Paint one frame: the field, then the HUD or a panel for the screen the game is on. */
-  function draw(state, screen, best) {
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.fillStyle = PALETTE.backdrop;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
-    drawField(state);
-    if (screen === SCREEN_TITLE) {
-      TITLE_LINES[2] = bestLabel(best);
-      drawPanel('Block Dodger', TITLE_LINES, 'Press Space or click to start');
-      return;
-    }
-    drawHud(state);
-    if (screen === SCREEN_PAUSED) drawPanel('Paused', PAUSED_LINES, 'Press P to resume');
-    else if (screen === SCREEN_OVER) {
-      OVER_LINES[0] = finalLabel(state.score);
-      OVER_LINES[1] = bestLabel(best);
-      drawPanel('Game over', OVER_LINES, 'Press Space or click to play again');
-    }
+  const yourHand = root.querySelector('#your-hand');
+  yourHand.innerHTML = '';
+  state.players.you.hand.forEach((card, index) => {
+    const cardEl = makeCardElement(card);
+    const playable = state.active === 'you' && state.phase === 'play' && !ui.busy
+      && card.cost <= state.starlight
+      && (card.kind !== 'spirit' || state.players.you.field.length < 5);
+    cardEl.classList.add(playable ? 'playable' : 'unplayable');
+    if (ui.selectedHand === index) cardEl.classList.add('selected');
+    cardEl.addEventListener('click', () => handlers.onHandCard(index));
+    yourHand.append(cardEl);
+  });
+}
+
+function renderCentre(root, state, ui, handlers) {
+  const turn = root.querySelector('#turn-label');
+  turn.textContent = state.phase === 'over'
+    ? 'The duel is decided'
+    : state.active === 'you' ? `Your turn · round ${state.turn}` : `Vesper's turn · round ${state.turn}`;
+
+  const crystals = root.querySelector('#starlight');
+  crystals.innerHTML = '';
+  for (let i = 0; i < MAX_STARLIGHT; i += 1) {
+    const pip = el('span', 'pip', '◆');
+    if (i < state.starlight) pip.classList.add('lit');
+    else if (i >= state.maxStarlight) pip.classList.add('locked');
+    crystals.append(pip);
   }
+  crystals.append(el('span', 'starlight-count', `${state.starlight}/${state.maxStarlight} starlight`));
 
-  resize();
-  window.addEventListener('resize', resize);
-  return { draw };
+  const log = root.querySelector('#log');
+  log.innerHTML = '';
+  for (const line of state.log.slice(-2)) log.append(el('div', 'log-line', line));
+
+  const endBtn = root.querySelector('#end-turn');
+  endBtn.disabled = !(state.active === 'you' && state.phase === 'play' && !ui.busy);
+  endBtn.onclick = () => handlers.onEndTurn();
+
+  const hint = root.querySelector('#hint');
+  hint.textContent = ui.hint ?? '';
+}
+
+// The full table: banners, fields, hands, centre row.
+export function renderTable(root, state, ui, handlers) {
+  renderDuelist(root.querySelector('#rival-banner'), state, 'rival', ui, handlers);
+  renderDuelist(root.querySelector('#your-banner'), state, 'you', ui, handlers);
+  renderField(root.querySelector('#rival-field'), state, 'rival', ui, handlers);
+  renderField(root.querySelector('#your-field'), state, 'you', ui, handlers);
+  renderHands(root, state, ui, handlers);
+  renderCentre(root, state, ui, handlers);
+}
+
+// Title, victory and defeat overlays.
+export function renderOverlay(root, state, ui, handlers) {
+  const overlay = root.querySelector('#overlay');
+  overlay.innerHTML = '';
+  if (ui.screen === 'game') {
+    overlay.classList.add('hidden');
+    return;
+  }
+  overlay.classList.remove('hidden');
+  const panel = el('div', 'panel');
+  if (ui.screen === 'title') {
+    panel.append(el('div', 'game-logo', '★'));
+    panel.append(el('h1', 'game-title', 'STARFALL PACT'));
+    panel.append(el('p', 'game-sub', 'A card duel beneath falling stars.'));
+    panel.append(el('p', 'rules',
+      'Both duelists begin at 20 life. Each round your starlight grows: spend it on Spirits that clash on the field and Charms that bend the duel. Comet spirits rush, Moon wardens guard, Stars grant wishes, Shards drain and bolster. Break Vesper\'s 20 life before she breaks yours.'));
+    const start = el('button', 'big-button', 'Begin the duel');
+    start.addEventListener('click', () => handlers.onStart());
+    panel.append(start);
+    panel.append(el('p', 'fine-print', 'Click a card to play it · click a ready spirit, then a target, to attack · Enter ends your turn'));
+  } else if (ui.screen === 'over') {
+    const won = state.winner === 'you';
+    panel.append(el('div', 'game-logo', won ? '★' : '☾'));
+    panel.append(el('h1', 'game-title', won ? 'THE PACT IS YOURS' : 'YOUR LIGHT GOES OUT'));
+    panel.append(el('p', 'game-sub', won
+      ? `Vesper's stars fade at round ${state.turn}. Final life — you ${Math.max(state.players.you.life, 0)}, Vesper ${Math.max(state.players.rival.life, 0)}.`
+      : `Vesper seals the pact at round ${state.turn}. Final life — you ${Math.max(state.players.you.life, 0)}, Vesper ${Math.max(state.players.rival.life, 0)}.`));
+    const again = el('button', 'big-button', 'Duel again');
+    again.addEventListener('click', () => handlers.onRestart());
+    panel.append(again);
+  }
+  overlay.append(panel);
+}
+
+// A floating number over the table (damage, healing).
+export function spawnFloater(root, text, anchorSelector, className) {
+  const table = root.querySelector('#table');
+  const anchor = root.querySelector(anchorSelector);
+  if (!table || !anchor) return;
+  const tableRect = table.getBoundingClientRect();
+  const rect = anchor.getBoundingClientRect();
+  const floater = el('div', `floater ${className ?? ''}`, text);
+  floater.style.left = `${rect.left - tableRect.left + rect.width / 2}px`;
+  floater.style.top = `${rect.top - tableRect.top}px`;
+  table.append(floater);
+  setTimeout(() => floater.remove(), 1200);
 }

@@ -1,79 +1,77 @@
-// The screenshot scenes behind ?shot=start|play|end. Each one plays the real rules forward from a
-// fresh world for a fixed number of steps, steered by a simple autopilot (look ahead each way the
-// paddle could move, keep clear of blocks, chase the lowest coin when that is safe), so the frame
-// is what a short game really looks like and the same seed always gives the same frame.
-import { FIELD, PLAYER, STEP } from './config.js';
-import { EVENT_OVER, KIND_BLOCK } from './world.js';
-import { SCREEN_OVER, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// Starfall Pact — staged scenes for screenshots.
+// The game's screenshots are real renders of this code in a browser,
+// staged deterministically with ?shot=<name>&seed=<n>: title shows the
+// title screen, table a mid-duel position, win and loss the two endings.
 
-const START_SECONDS = 5;
-const PLAY_SECONDS = 26;
-const END_LIMIT_SECONDS = 600;
-/**
- * How far ahead, in seconds, the autopilot checks each way it could move: the play scene's pilot
- * looks well ahead and keeps all its lives; the end scene's looks only a moment ahead, so it is
- * caught out once the blocks speed up, as a hurried player is.
- */
-const HORIZON_PLAY = 0.7;
-const HORIZON_END = 0.25;
-const SAMPLE = 1 / 30;
-const DIRECTIONS = [0, -1, 1];
-/** Extra room, each side, it keeps between the paddle and a block. */
-const MARGIN = 10;
+import { createGame, makeSpiritInstance } from './engine.js';
 
-/** Seconds until moving in `direction` (-1, 0, 1) runs the paddle into a block; Infinity when it never does. */
-function timeToHit(state, direction, horizon) {
-  const player = state.player;
-  for (let t = SAMPLE; t <= horizon; t += SAMPLE) {
-    const x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * t));
-    for (let index = 0; index < state.items.length; index += 1) {
-      const item = state.items[index];
-      if (!item.active || item.kind !== KIND_BLOCK) continue;
-      const y = item.y + item.speed * t;
-      if (y + item.height > player.y && y < player.y + player.height && item.x < x + player.width + MARGIN && item.x + item.width > x - MARGIN) return t;
-    }
-  }
-  return Infinity;
+function putSpirit(state, who, cardId, guard, tired) {
+  const spirit = makeSpiritInstance(cardId);
+  if (guard !== undefined) spirit.guard = guard;
+  spirit.tired = tired ?? false;
+  spirit.attacked = false;
+  state.players[who].field.push(spirit);
+  return spirit;
 }
 
-/** Of the safe ways to move, the one toward the lowest coin (or the centre); else the one that is hit last. */
-function autopilot(state, horizon) {
-  const player = state.player;
-  let coin = null;
-  for (let index = 0; index < state.items.length; index += 1) {
-    const item = state.items[index];
-    if (item.active && item.kind !== KIND_BLOCK && (coin === null || item.y > coin.y)) coin = item;
-  }
-  const target = coin === null ? FIELD.width / 2 : coin.x + coin.width / 2;
-  const centre = player.x + player.width / 2;
-  const wanted = target > centre + 8 ? 1 : target < centre - 8 ? -1 : 0;
-  let best = wanted;
-  let bestTime = timeToHit(state, wanted, horizon);
-  for (let index = 0; index < DIRECTIONS.length && bestTime !== Infinity; index += 1) {
-    const time = timeToHit(state, DIRECTIONS[index], horizon);
-    if (time > bestTime) {
-      bestTime = time;
-      best = DIRECTIONS[index];
-    }
-  }
-  return best;
+function setHand(state, who, cardIds) {
+  state.players[who].hand = cardIds.map((id) => makeSpiritInstance(id));
 }
 
-/**
- * Set `world` to the named scene (start, play or end; any other name is start) and return the
- * screen to draw over it and the best score to show.
- */
-export function stageShot(name, world) {
-  world.reset();
-  if (name !== 'play' && name !== 'end') {
-    for (let index = 0; index < START_SECONDS / STEP; index += 1) world.step(STEP, 0, true);
-    return { screen: SCREEN_TITLE, best: 0 };
-  }
-  const limit = name === 'end' ? END_LIMIT_SECONDS : PLAY_SECONDS;
-  const horizon = name === 'end' ? HORIZON_END : HORIZON_PLAY;
-  for (let index = 0; index < limit / STEP; index += 1) {
-    if (world.step(STEP, autopilot(world.state, horizon), false) & EVENT_OVER) break;
-  }
-  const over = world.state.lives === 0;
-  return { screen: over ? SCREEN_OVER : SCREEN_PLAY, best: world.state.score };
+// A believable mid-duel: round 4, both fields developed, Vesper slightly
+// ahead on life, the player holding answers.
+export function stageTable(seed) {
+  const state = createGame(seed);
+  state.turn = 4;
+  state.maxStarlight = 4;
+  state.starlight = 3;
+  state.players.you.life = 13;
+  state.players.rival.life = 16;
+  state.players.you.field = [];
+  state.players.rival.field = [];
+  putSpirit(state, 'you', 'comet-rider', 2, false);
+  putSpirit(state, 'you', 'moon-warden', 3, false);
+  putSpirit(state, 'you', 'wish-sprite', 1, true);
+  putSpirit(state, 'rival', 'shard-stalker', 1, false);
+  putSpirit(state, 'rival', 'tide-priest', 4, false);
+  setHand(state, 'you', ['starfall-bolt', 'flare-drake', 'moonwell', 'ember-imp']);
+  setHand(state, 'rival', ['prism-golem', 'siphon', 'ember-imp']);
+  state.log = [
+    'Vesper plays Tide Priest and restores 2 life.',
+    'Your turn: Comet Rider and Moon Warden are ready to attack.',
+  ];
+  return state;
+}
+
+export function stageWin(seed) {
+  const state = stageTable(seed);
+  state.turn = 7;
+  state.phase = 'over';
+  state.winner = 'you';
+  state.players.you.life = 7;
+  state.players.rival.life = 0;
+  state.players.rival.field = [];
+  state.log = ['Flare Drake strikes Vesper directly.', 'Vesper falls. The pact is yours.'];
+  return state;
+}
+
+export function stageLoss(seed) {
+  const state = stageTable(seed);
+  state.turn = 6;
+  state.phase = 'over';
+  state.winner = 'rival';
+  state.players.you.life = 0;
+  state.players.rival.life = 9;
+  state.players.you.field = [];
+  state.log = ['Prism Golem strikes you directly.', 'Your light goes out. The pact is lost.'];
+  return state;
+}
+
+// Returns { state, screen } for a ?shot= name, or null for normal play.
+export function shotScene(name, seed) {
+  if (name === 'title') return { state: createGame(seed), screen: 'title' };
+  if (name === 'table') return { state: stageTable(seed), screen: 'game' };
+  if (name === 'win') return { state: stageWin(seed), screen: 'over' };
+  if (name === 'loss') return { state: stageLoss(seed), screen: 'over' };
+  return null;
 }

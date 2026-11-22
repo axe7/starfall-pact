@@ -1,0 +1,282 @@
+/* Starfall Pact — table styling.
+   A night-sky duelling table: deep indigo felt, gold trim, and cards whose
+   suits read by colour and glyph at any size. */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #070a1a;
+  font-family: Georgia, 'Times New Roman', serif;
+  color: #eef1ff;
+}
+
+#app { position: fixed; inset: 0; }
+
+#table {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 18px 12px;
+  background:
+    radial-gradient(2px 2px at 12% 22%, #ffffffcc, transparent 60%),
+    radial-gradient(1.5px 1.5px at 32% 68%, #ffffff99, transparent 60%),
+    radial-gradient(2px 2px at 55% 12%, #ffffffb3, transparent 60%),
+    radial-gradient(1.5px 1.5px at 74% 40%, #ffffff80, transparent 60%),
+    radial-gradient(2px 2px at 88% 78%, #ffffff99, transparent 60%),
+    radial-gradient(1.5px 1.5px at 44% 88%, #ffffff73, transparent 60%),
+    radial-gradient(1200px 500px at 50% -10%, #2b3a7a 0%, transparent 60%),
+    linear-gradient(180deg, #0a1030 0%, #101a44 45%, #0a1030 100%);
+}
+
+#status {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* --- top bar ---------------------------------------------------------- */
+#topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 8px;
+}
+#brand { font-weight: bold; letter-spacing: 2px; color: #ffd94d; font-size: 17px; }
+#turn-label { font-size: 17px; color: #cdd7ff; letter-spacing: 1px; }
+#mute {
+  background: #1a2456;
+  border: 1px solid #46579f;
+  border-radius: 8px;
+  color: #eef1ff;
+  font-size: 15px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+
+/* --- duelist banners ---------------------------------------------------- */
+#rival-zone, #your-zone {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+}
+.duelist {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #141d47cc;
+  border: 1px solid #3c4c8f;
+  border-radius: 12px;
+  padding: 6px 14px 6px 8px;
+  min-width: 330px;
+}
+.duelist.targetable { outline: 3px solid #ffd94d; cursor: pointer; }
+.duelist-face {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe9a3, #b98a1d);
+  color: #231a02;
+  font-size: 24px;
+  display: flex; align-items: center; justify-content: center;
+}
+#rival-banner .duelist-face { background: radial-gradient(circle at 35% 30%, #d9ecff, #4a7fb5); color: #0a1c30; }
+.duelist-name { font-size: 17px; font-weight: bold; }
+.duelist-sub { font-size: 12.5px; color: #9fb0e8; }
+.life { margin-left: auto; font-size: 27px; font-weight: bold; color: #ff8fa3; }
+.life.low { color: #ff5252; animation: pulse 1s infinite; }
+@keyframes pulse { 50% { transform: scale(1.12); } }
+.shake { animation: shake 0.4s; }
+@keyframes shake {
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(3px); }
+}
+
+/* --- fields and hands --------------------------------------------------- */
+.field {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  border: 1px dashed #33427c;
+  border-radius: 14px;
+  margin: 6px 0;
+  padding: 6px;
+  background: #0b1233aa;
+  min-height: 176px;
+}
+.field-empty { color: #7787c4; font-style: italic; font-size: 15px; }
+#rival-hand, #your-hand { display: flex; gap: 10px; align-items: center; }
+#rival-hand { margin-left: auto; }
+#your-hand { flex: 1; justify-content: center; }
+#your-zone { align-items: flex-end; }
+
+/* --- centre row --------------------------------------------------------- */
+#centre-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 2px 4px;
+}
+#log { flex: 1; font-size: 13.5px; color: #aebadd; font-style: italic; min-height: 34px; }
+#centre-stack { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+#starlight { display: flex; align-items: center; gap: 3px; }
+#starlight .pip { color: #2c3a75; font-size: 15px; }
+#starlight .pip.lit { color: #ffd94d; text-shadow: 0 0 7px #ffd94d; }
+#starlight .pip.locked { opacity: 0.25; }
+.starlight-count { margin-left: 8px; font-size: 14px; color: #ffd94d; }
+#hint { font-size: 13.5px; color: #ffe9a3; min-height: 17px; }
+#end-turn {
+  background: linear-gradient(180deg, #ffd94d, #d9a41c);
+  color: #241a00;
+  border: none;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: bold;
+  padding: 10px 22px;
+  cursor: pointer;
+  box-shadow: 0 3px 10px #00000088;
+}
+#end-turn:disabled { filter: grayscale(0.8); opacity: 0.45; cursor: default; }
+
+/* --- cards -------------------------------------------------------------- */
+.card {
+  position: relative;
+  width: 118px;
+  height: 160px;
+  border-radius: 10px;
+  background: linear-gradient(165deg, #fdfdff 0%, #dfe4f5 100%);
+  color: #131a33;
+  border: 2px solid var(--suit-color);
+  box-shadow: 0 4px 10px #00000090;
+  display: flex;
+  flex-direction: column;
+  padding: 5px 7px;
+  user-select: none;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+.card.mini { width: 52px; height: 72px; padding: 3px; }
+.card.back {
+  background: repeating-linear-gradient(45deg, #1b2653 0 8px, #232f63 8px 16px);
+  border-color: #ffd94d;
+  align-items: center;
+  justify-content: center;
+}
+.back-star { color: #ffd94d; font-size: 24px; text-shadow: 0 0 8px #ffd94d; }
+.card-top { display: flex; align-items: flex-start; gap: 4px; }
+.cost {
+  background: var(--suit-color);
+  color: #10131f;
+  font-weight: bold;
+  font-size: 15px;
+  min-width: 21px; height: 21px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 -2px 3px #00000055;
+  flex: none;
+}
+.card-name { font-size: 12.5px; font-weight: bold; line-height: 1.12; flex: 1; }
+.suit-glyph { color: var(--suit-color); font-size: 15px; flex: none; }
+.card-art {
+  margin: 4px 0 2px;
+  height: 44px;
+  border-radius: 6px;
+  background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--suit-color) 55%, white), var(--suit-color));
+  color: #ffffff;
+  font-size: 27px;
+  display: flex; align-items: center; justify-content: center;
+  text-shadow: 0 1px 4px #00000088;
+}
+.card-body { flex: 1; }
+.card-kind { font-size: 10.5px; letter-spacing: 0.6px; text-transform: uppercase; color: #4a5578; }
+.card-text { font-size: 11px; line-height: 1.25; color: #232c4d; margin-top: 2px; }
+.card-stats { display: flex; justify-content: space-between; font-size: 16.5px; font-weight: bold; }
+.card-stats .power { color: #b03a1e; }
+.card-stats .guard { color: #1e5fb0; }
+.card-stats .guard.wounded { color: #d33; }
+.tired-badge {
+  position: absolute;
+  right: 5px; bottom: 26px;
+  background: #131a33cc;
+  color: #cdd7ff;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  letter-spacing: 0.5px;
+}
+#your-hand .card.playable { cursor: pointer; }
+#your-hand .card.playable:hover { transform: translateY(-12px); box-shadow: 0 12px 18px #000000aa; }
+#your-hand .card.unplayable { filter: saturate(0.45) brightness(0.82); }
+.card.selected { outline: 3px solid #ffd94d; transform: translateY(-12px); }
+.card.targetable { outline: 3px dashed #ffd94d; cursor: pointer; animation: pulse 0.9s infinite; }
+.card.ready { cursor: pointer; box-shadow: 0 0 0 2px #ffd94d88, 0 4px 10px #00000090; }
+.card.enter { animation: enter 0.35s ease; }
+@keyframes enter {
+  from { transform: translateY(26px) scale(0.92); }
+}
+.card.hurt { animation: shake 0.4s; }
+
+/* --- floaters ------------------------------------------------------------ */
+.floater {
+  position: absolute;
+  transform: translate(-50%, -10%);
+  font-size: 26px;
+  font-weight: bold;
+  color: #ff6b6b;
+  text-shadow: 0 2px 4px #000;
+  pointer-events: none;
+  animation: float-up 1.2s ease forwards;
+  z-index: 40;
+}
+@keyframes float-up {
+  to { transform: translate(-50%, -160%); opacity: 0; }
+}
+
+/* --- overlay screens ------------------------------------------------------ */
+#overlay {
+  position: absolute;
+  inset: 0;
+  background: #05081df2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+#overlay.hidden { display: none; }
+.panel {
+  text-align: center;
+  max-width: 640px;
+  padding: 34px 44px;
+  background: linear-gradient(180deg, #131c4a, #0a1030);
+  border: 1px solid #ffd94d66;
+  border-radius: 18px;
+  box-shadow: 0 18px 50px #000000cc;
+}
+.game-logo { font-size: 52px; color: #ffd94d; text-shadow: 0 0 22px #ffd94d; }
+.game-title { margin: 6px 0 2px; font-size: 43px; letter-spacing: 4px; color: #ffeeb0; }
+.game-sub { font-size: 18px; color: #cdd7ff; margin: 4px 0 12px; }
+.rules { font-size: 15px; line-height: 1.55; color: #aebadd; }
+.big-button {
+  background: linear-gradient(180deg, #ffd94d, #d9a41c);
+  color: #241a00;
+  border: none;
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: bold;
+  padding: 13px 34px;
+  cursor: pointer;
+  margin-top: 14px;
+  box-shadow: 0 5px 16px #00000099;
+}
+.big-button:hover { filter: brightness(1.07); }
+.fine-print { margin-top: 16px; font-size: 12.5px; color: #7787c4; }

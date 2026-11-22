@@ -1,134 +1,228 @@
-// Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s steps
-// (several in a slow frame, none in a fast one), and the renderer paints what is there. The game
-// moves between four screens: title, play, paused and game over.
-//
-// ?seed=N fixes the falling pattern. ?shot=start|play|end (with &seed=N) stages that scene
-// instead of running the loop, paints it twice and sets window.__shotReady for a screenshot.
-import { BEST_KEY, LIVES, STEP } from './config.js';
-import { createRandom } from './random.js';
-import { createWorld, EVENT_HIT, EVENT_OVER } from './world.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-import { stageShot } from './shots.js';
+// Starfall Pact — the table itself.
+// Wires the engine, the rival and the renderer together: clicking cards,
+// choosing targets, attacking, ending turns, and running Vesper's turn
+// one visible step at a time.
 
-/** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
-const MAX_FRAME = 0.25;
+import {
+  attack,
+  canPlay,
+  cardNeedsTarget,
+  createGame,
+  endTurn,
+  legalAttackTargets,
+  legalTargets,
+  playCard,
+} from './engine.js';
+import { rivalAttackStep, rivalPlayStep } from './ai.js';
+import { renderOverlay, renderTable, spawnFloater } from './render.js';
+import { initAudio, playSound, toggleMuted } from './audio.js';
+import { shotScene } from './shots.js';
 
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
+const root = document.querySelector('#app');
+const params = new URLSearchParams(location.search);
+const shotName = params.get('shot');
+const shotSeed = Number(params.get('seed') ?? 7);
 
-const canvas = document.getElementById('game');
-const status = document.getElementById('status');
-const world = createWorld(createRandom(seed));
-const renderer = createRenderer(canvas);
+const ui = {
+  screen: 'title',
+  selectedHand: -1,
+  selectedAttacker: null,
+  targetSet: null,
+  hint: '',
+  busy: false,
+  flashUids: new Set(),
+  flashDuelist: null,
+};
 
-function readBest() {
-  try {
-    return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0;
-  } catch {
-    return 0;
+let state = createGame((Math.random() * 1e9) >>> 0);
+if (shotName) {
+  const scene = shotScene(shotName, shotSeed);
+  if (scene) {
+    state = scene.state;
+    ui.screen = scene.screen;
   }
 }
 
-function saveBest(value) {
-  try {
-    window.localStorage.setItem(BEST_KEY, String(value));
-  } catch {
-    // Storage can be off (private windows): the best score then lasts this visit only.
+function targetKeySet(targets) {
+  return new Set(targets.map((t) => `${t.side}:${t.uid}`));
+}
+
+function clearSelection() {
+  ui.selectedHand = -1;
+  ui.selectedAttacker = null;
+  ui.targetSet = null;
+  ui.hint = '';
+}
+
+function refresh() {
+  renderTable(root, state, ui, handlers);
+  renderOverlay(root, state, ui, handlers);
+  const status = document.querySelector('#status');
+  if (status) {
+    status.textContent = state.phase === 'over'
+      ? (state.winner === 'you' ? 'You won the duel.' : 'Vesper won the duel.')
+      : `${state.active === 'you' ? 'Your' : "Vesper's"} turn. Your life ${state.players.you.life}, Vesper's life ${state.players.rival.life}.`;
   }
 }
 
-function runShot(name) {
-  const scene = stageShot(name, world);
-  let painted = 0;
-  function paint() {
-    renderer.draw(world.state, scene.screen, scene.best);
-    painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else window.__shotReady = true;
-  }
-  requestAnimationFrame(paint);
-}
-
-function runGame() {
-  const input = createInput(canvas);
-  let screen = SCREEN_TITLE;
-  let best = readBest();
-  let accumulator = 0;
-  let last = performance.now();
-
-  // Screen readers (and anyone watching the page's text) hear the screen changes and each hit.
-  function announce(message) {
-    status.textContent = message;
-  }
-
-  function startGame() {
-    world.reset();
-    accumulator = 0;
-    screen = SCREEN_PLAY;
-    announce(`Playing. ${LIVES} lives.`);
-  }
-
-  function endGame() {
-    screen = SCREEN_OVER;
-    if (world.state.score > best) {
-      best = world.state.score;
-      saveBest(best);
+// Turn engine events into sound and floating numbers.
+function presentEvents(events) {
+  for (const event of events) {
+    if (event.type === 'spiritDamage') {
+      ui.flashUids.add(event.uid);
+      playSound('hurt');
     }
-    announce(`Game over. Score ${world.state.score}. Best ${best}.`);
-  }
-
-  function handleActions() {
-    const actions = input.takeActions();
-    if (actions & ACTION_CONFIRM && (screen === SCREEN_TITLE || screen === SCREEN_OVER)) startGame();
-    else if (actions & ACTION_PAUSE && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && screen === SCREEN_PAUSED) {
-      screen = SCREEN_PLAY;
-      announce('Playing.');
+    if (event.type === 'spiritFades') playSound('fade');
+    if (event.type === 'duelistDamage') {
+      ui.flashDuelist = event.who;
+      spawnFloater(root, `-${event.amount}`, event.who === 'you' ? '#your-banner .life' : '#rival-banner .life', 'damage');
+      playSound('hurt');
     }
+    if (event.type === 'spiritArrives') playSound('play');
   }
+}
 
-  function step() {
-    if (screen === SCREEN_TITLE) {
-      world.step(STEP, 0, true);
+function afterAction(events) {
+  presentEvents(events);
+  refresh();
+  setTimeout(() => {
+    ui.flashUids.clear();
+    ui.flashDuelist = null;
+    refresh();
+  }, 450);
+  if (state.phase === 'over') {
+    ui.screen = 'over';
+    playSound(state.winner === 'you' ? 'win' : 'lose');
+    refresh();
+  }
+}
+
+function runRivalTurn() {
+  ui.busy = true;
+  clearSelection();
+  refresh();
+  const step = () => {
+    if (state.phase === 'over') {
+      ui.busy = false;
+      afterAction([]);
       return;
     }
-    const events = world.step(STEP, input.direction(), false);
-    if (events & EVENT_OVER) endGame();
-    else if (events & EVENT_HIT) announce(world.state.lives === 1 ? 'Hit. 1 life left.' : `Hit. ${world.state.lives} lives left.`);
-  }
-
-  function frame(now) {
-    requestAnimationFrame(frame);
-    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
-    last = now;
-    handleActions();
-    if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
-      while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) {
-        step();
-        accumulator -= STEP;
-      }
-    } else {
-      accumulator = 0;
+    const played = rivalPlayStep(state);
+    if (played) {
+      afterAction(played.events);
+      setTimeout(step, 750);
+      return;
     }
-    renderer.draw(world.state, screen, best);
-  }
-
-  // Leaving the tab pauses a running game rather than letting blocks fall unseen.
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
+    const attacked = rivalAttackStep(state);
+    if (attacked) {
+      playSound('attack');
+      afterAction(attacked.events);
+      setTimeout(step, 750);
+      return;
     }
-  });
-
-  announce('Block Dodger. Press Space or click to start.');
-  requestAnimationFrame(frame);
+    const events = endTurn(state);
+    ui.busy = false;
+    playSound('turn');
+    afterAction(events);
+  };
+  setTimeout(step, 650);
 }
 
-if (shot) runShot(shot);
-else runGame();
+const handlers = {
+  onStart() {
+    initAudio();
+    state = createGame((Math.random() * 1e9) >>> 0);
+    ui.screen = 'game';
+    clearSelection();
+    playSound('turn');
+    refresh();
+  },
+  onRestart() {
+    handlers.onStart();
+  },
+  onHandCard(index) {
+    if (ui.busy || state.active !== 'you' || state.phase !== 'play') return;
+    initAudio();
+    if (ui.selectedAttacker !== null) clearSelection();
+    const card = state.players.you.hand[index];
+    if (!card) return;
+    if (!canPlay(state, 'you', index)) {
+      ui.hint = card.cost > state.starlight ? `Not enough starlight for ${card.name}.` : `${card.name} cannot be played now.`;
+      refresh();
+      return;
+    }
+    if (cardNeedsTarget(card)) {
+      ui.selectedHand = index;
+      ui.targetSet = targetKeySet(legalTargets(state, 'you', card));
+      ui.hint = `Choose a target for ${card.name}.`;
+      refresh();
+      return;
+    }
+    const events = playCard(state, 'you', index);
+    playSound('play');
+    clearSelection();
+    afterAction(events);
+  },
+  onFieldSpirit(who, uid) {
+    if (ui.busy || state.phase !== 'play') return;
+    initAudio();
+    // Clicking a target while a card or attacker is selected.
+    if (ui.targetSet && ui.targetSet.has(`${who}:${uid}`)) {
+      resolveTarget({ side: who, uid });
+      return;
+    }
+    if (state.active !== 'you' || who !== 'you') return;
+    const spirit = state.players.you.field.find((s) => s.uid === uid);
+    if (!spirit || spirit.tired || spirit.attacked) {
+      ui.hint = spirit ? `${spirit.name} cannot attack now.` : '';
+      refresh();
+      return;
+    }
+    ui.selectedAttacker = uid;
+    ui.selectedHand = -1;
+    ui.targetSet = targetKeySet(legalAttackTargets(state, 'you'));
+    ui.hint = `${spirit.name} strikes: choose a target.`;
+    refresh();
+  },
+  onDuelist(who) {
+    if (ui.targetSet && ui.targetSet.has(`${who}:duelist`)) resolveTarget({ side: who, uid: 'duelist' });
+  },
+  onEndTurn() {
+    if (ui.busy || state.active !== 'you' || state.phase !== 'play') return;
+    clearSelection();
+    const events = endTurn(state);
+    afterAction(events);
+    if (state.phase !== 'over') runRivalTurn();
+  },
+};
+
+function resolveTarget(target) {
+  let events = [];
+  if (ui.selectedHand >= 0) {
+    events = playCard(state, 'you', ui.selectedHand, target);
+    playSound('play');
+  } else if (ui.selectedAttacker !== null) {
+    events = attack(state, 'you', ui.selectedAttacker, target);
+    playSound('attack');
+  }
+  clearSelection();
+  afterAction(events);
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && ui.screen === 'game') handlers.onEndTurn();
+  if (event.key === 'Escape') {
+    clearSelection();
+    refresh();
+  }
+});
+
+const muteButton = document.querySelector('#mute');
+if (muteButton) {
+  muteButton.addEventListener('click', () => {
+    initAudio();
+    muteButton.textContent = toggleMuted() ? '🔇' : '🔊';
+  });
+}
+
+refresh();

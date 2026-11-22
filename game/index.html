@@ -3,17 +3,42 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Block Dodger</title>
-<style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #11141b; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-</style>
+<title>Starfall Pact — a card duel beneath falling stars</title>
+<link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<canvas id="game" aria-label="Block Dodger: move the paddle left and right to dodge falling blocks and catch coins"></canvas>
-<p id="status" role="status" aria-live="polite"></p>
+<div id="app">
+  <main id="table">
+    <header id="topbar">
+      <span id="brand">★ STARFALL PACT</span>
+      <span id="turn-label">Your turn</span>
+      <button id="mute" title="Toggle sound">🔊</button>
+    </header>
+
+    <section id="rival-zone">
+      <div id="rival-banner"></div>
+      <div id="rival-hand" aria-label="Vesper's hand, face down"></div>
+    </section>
+    <div id="rival-field" class="field" aria-label="Vesper's spirits"></div>
+
+    <section id="centre-row">
+      <div id="log" aria-label="Recent events"></div>
+      <div id="centre-stack">
+        <div id="starlight" aria-label="Your starlight"></div>
+        <div id="hint"></div>
+      </div>
+      <button id="end-turn">End Turn ➜</button>
+    </section>
+
+    <div id="your-field" class="field" aria-label="Your spirits"></div>
+    <section id="your-zone">
+      <div id="your-banner"></div>
+      <div id="your-hand" aria-label="Your hand"></div>
+    </section>
+  </main>
+  <div id="overlay" class="hidden"></div>
+  <p id="status" role="status" aria-live="polite"></p>
+</div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
